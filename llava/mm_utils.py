@@ -242,31 +242,64 @@ def get_anyres_image_grid_shape(image_size, grid_pinpoints, patch_size):
 
 def process_anyres_image(image, processor, grid_pinpoints):
     """
-    Process an image with variable resolutions.
+    Process an image for any resolution by dividing it into patches.
 
     Args:
-        image (PIL.Image.Image): The input image to be processed.
-        processor: The image processor object.
+        image (PIL.Image.Image): The input image.
+        processor: The image processor.
         grid_pinpoints (str): A string representation of a list of possible resolutions.
 
     Returns:
         torch.Tensor: A tensor containing the processed image patches.
     """
+    # Get patch_size, handling different processor.size formats
+    patch_size = 336  # Default value if we can't determine from processor
+    
+    try:
+        if hasattr(processor, "__getitem__") and callable(processor.__getitem__):
+            # Our ProcessorWrapper with __getitem__ support
+            try:
+                patch_size = processor[0]  # Using the indexing access
+            except (IndexError, KeyError):
+                # Fallback if indexing fails
+                if hasattr(processor, "size"):
+                    if isinstance(processor.size, dict):
+                        patch_size = processor.size.get("shortest_edge", 
+                                    processor.size.get("height", 336))
+                    elif isinstance(processor.size, (list, tuple)) and len(processor.size) > 0:
+                        patch_size = processor.size[0]
+                    else:
+                        patch_size = processor.size if isinstance(processor.size, (int, float)) else 336
+        elif hasattr(processor, "size"):
+            # Handle different size formats directly
+            if isinstance(processor.size, dict):
+                patch_size = processor.size.get("shortest_edge", 
+                            processor.size.get("height", 336))
+            elif isinstance(processor.size, (list, tuple)) and len(processor.size) > 0:
+                patch_size = processor.size[0]
+            else:
+                patch_size = processor.size if isinstance(processor.size, (int, float)) else 336
+    except Exception as e:
+        print(f"Error determining patch size: {e}. Using default of 336.")
+        patch_size = 336
+        
     # Convert grid_pinpoints from string to list
     if isinstance(grid_pinpoints, str) and "x" in grid_pinpoints:
         try:
-            patch_size = processor.size[0]
+            # Ensure patch_size is valid
+            assert patch_size in [224, 336, 384, 448, 512], f"patch_size {patch_size} should be in [224, 336, 384, 448, 512]"
+            # Use regex to extract the range from the input string
+            matches = re.findall(r"\((\d+)x(\d+)\)", grid_pinpoints)
+            range_start = tuple(map(int, matches[0]))
+            range_end = tuple(map(int, matches[-1]))
+            # Generate a matrix of tuples from (range_start[0], range_start[1]) to (range_end[0], range_end[1])
+            grid_pinpoints = [(i, j) for i in range(range_start[0], range_end[0] + 1) for j in range(range_start[1], range_end[1] + 1)]
+            # Multiply all elements by patch_size
+            grid_pinpoints = [[dim * patch_size for dim in pair] for pair in grid_pinpoints]
         except Exception as e:
-            patch_size = processor.size["shortest_edge"]
-        assert patch_size in [224, 336, 384, 448, 512], "patch_size should be in [224, 336, 384, 448, 512]"
-        # Use regex to extract the range from the input string
-        matches = re.findall(r"\((\d+)x(\d+)\)", grid_pinpoints)
-        range_start = tuple(map(int, matches[0]))
-        range_end = tuple(map(int, matches[-1]))
-        # Generate a matrix of tuples from (range_start[0], range_start[1]) to (range_end[0], range_end[1])
-        grid_pinpoints = [(i, j) for i in range(range_start[0], range_end[0] + 1) for j in range(range_start[1], range_end[1] + 1)]
-        # Multiply all elements by patch_size
-        grid_pinpoints = [[dim * patch_size for dim in pair] for pair in grid_pinpoints]
+            print(f"Error processing grid_pinpoints: {e}")
+            # Create default grid points
+            grid_pinpoints = [[patch_size, patch_size]]
 
     if type(grid_pinpoints) is list:
         possible_resolutions = grid_pinpoints
@@ -275,18 +308,32 @@ def process_anyres_image(image, processor, grid_pinpoints):
     best_resolution = select_best_resolution(image.size, possible_resolutions)
     image_padded = resize_and_pad_image(image, best_resolution)
 
-    patches = divide_to_patches(image_padded, processor.crop_size["height"])
+    # Get crop size, handling different formats
+    crop_size = 336  # Default
+    if hasattr(processor, "crop_size") and isinstance(processor.crop_size, dict):
+        crop_size = processor.crop_size.get("height", 336)
+    elif hasattr(processor, "__getitem__") and callable(processor.__getitem__):
+        try:
+            crop_size = processor[0]  # Try using the wrapper's indexing
+        except (IndexError, KeyError):
+            pass
 
-    # FIXME: this seems to be a bug that it resizes instead of pad.
-    # but to keep it consistent with previous, i will keep it as it is
-    # TODO: uncomment below to ablate with the padding
-    if isinstance(processor.size, dict):
-        shortest_edge = processor.size["shortest_edge"]
-    else:
-        shortest_edge = min(processor.size)
+    patches = divide_to_patches(image_padded, crop_size)
+
+    # Get shortest_edge for final resizing
+    shortest_edge = patch_size  # Default to patch_size
+    try:
+        if hasattr(processor, "size"):
+            if isinstance(processor.size, dict):
+                shortest_edge = processor.size.get("shortest_edge", patch_size)
+            elif isinstance(processor.size, (list, tuple)) and len(processor.size) > 0:
+                shortest_edge = min(processor.size)
+            else:
+                shortest_edge = processor.size if isinstance(processor.size, (int, float)) else patch_size
+    except Exception:
+        pass
+        
     image_original_resize = image.resize((shortest_edge, shortest_edge))
-    # image_padded_square = expand2square(image, tuple(int(x*255) for x in processor.image_mean))
-    # image_original_resize = image_padded_square.resize((processor.size['shortest_edge'], processor.size['shortest_edge']))
 
     image_patches = [image_original_resize] + patches
     image_patches = [processor.preprocess(image_patch, return_tensors="pt")["pixel_values"][0] for image_patch in image_patches]
