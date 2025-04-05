@@ -31,11 +31,8 @@ from .utils import (
 from ..import_utils import is_diffusers_available
 from .base import BaseTrainer
 from .ddpo_config import DDPOConfig
-
-
-if is_diffusers_available():
-    from .ddpo_trainer import DDPOTrainer
-
+from .grpo_config import GRPOConfig
+from .grpo_trainer import GRPOTrainer
 from .dpo_trainer import DPOTrainer
 from .iterative_sft_trainer import IterativeSFTTrainer
 from .model_config import ModelConfig
@@ -44,3 +41,29 @@ from .ppo_trainer import PPOTrainer
 from .reward_config import RewardConfig
 from .reward_trainer import RewardTrainer, compute_accuracy
 from .sft_trainer import SFTTrainer
+
+if is_diffusers_available():
+    from .ddpo_trainer import DDPOTrainer
+
+__all__ = [
+    "AdaptiveKLController",
+    "BaseTrainer",
+    "ConstantLengthDataset",
+    "DataCollatorForCompletionOnlyLM",
+    "DDPOConfig",
+    "DPOTrainer",
+    "FixedKLController",
+    "GRPOConfig",
+    "GRPOTrainer",
+    "IterativeSFTTrainer",
+    "ModelConfig",
+    "PPOConfig",
+    "PPOTrainer",
+    "RewardConfig",
+    "RewardTrainer",
+    "RunningMoments",
+    "SFTTrainer",
+    "compute_accuracy",
+    "disable_dropout_in_model",
+    "peft_module_casting_to_bf16",
+]
